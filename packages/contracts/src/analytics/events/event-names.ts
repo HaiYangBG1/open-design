@@ -25,6 +25,8 @@ export type AnalyticsEventName =
   | 'mcp_tool_finished'
   // Paid media provider request outcome and bounded response retry.
   | 'media_generation_result'
+  | 'media_stock_request_result'
+  | 'media_stock_slot_result'
   // Chat artifact snapshot capture outcome per finished run. Daemon-only;
   // `source_changed_count` is the correctness alarm inside it.
   | 'chat_artifact_capture_result'
@@ -59,6 +61,7 @@ export type AnalyticsEventName =
   | 'workspace_shared_project_open_result'
   | 'workspace_resource_action_result'
   | 'project_comment_create_result'
+  | 'project_comment_send_result'
   // Message-level conversation forking. Entry clicks stay on `ui_click`;
   // this result event records whether the new conversation was created.
   | 'conversation_fork_result'

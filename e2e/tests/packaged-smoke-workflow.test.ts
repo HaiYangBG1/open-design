@@ -509,6 +509,41 @@ describe("packaged smoke workflow", () => {
     expect(reportWorkflow).not.toContain("merge_group");
   });
 
+  it.each([false, true])('[P1] only annotates published Docker indexes (publish=%s)', async (publish) => {
+    const workflow = await readFile(dockerImageWorkflowPath, 'utf8');
+    const script = extractWorkflowRunScript(workflow, 'Resolve publish mode');
+    const parsed = parseYaml(workflow) as {
+      jobs: Record<string, { steps: Array<{ name: string; with?: Record<string, unknown> }> }>;
+    };
+    const build = parsed.jobs['build-and-push']?.steps.find((step) => step.name === 'Build and push');
+    const root = await mkdtemp(join(tmpdir(), 'docker-export-mode-'));
+    const outputPath = join(root, 'github-output');
+    const revision = 'a'.repeat(40);
+    try {
+      await execFileAsync('bash', ['-c', script], {
+        env: workflowFixtureEnv({
+          EXPECTED_REVISION: publish ? revision : '',
+          RELEASE_VERSION: publish ? '0.24.1' : '',
+          GITHUB_OUTPUT: outputPath,
+        }, root),
+      });
+      const outputs = parseGithubOutput(await readFile(outputPath, 'utf8'));
+      expect(outputs).toEqual({
+        publish: String(publish),
+        platforms: publish ? 'linux/amd64,linux/arm64' : 'linux/amd64',
+        revision_annotation: publish ? `index:org.opencontainers.image.revision=${revision}` : '',
+        version_annotation: publish ? 'index:org.opencontainers.image.version=0.24.1' : '',
+      });
+      expect(build?.with?.annotations).toBe(
+        '${{ steps.mode.outputs.revision_annotation }}\n${{ steps.mode.outputs.version_annotation }}\n',
+      );
+      expect(build?.with?.load).toBe("${{ steps.mode.outputs.publish != 'true' }}");
+      expect(build?.with?.push).toBe("${{ steps.mode.outputs.publish == 'true' }}");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('[P1] carries the Docker tag version into the runtime and health check', async () => {
     const workflow = await readFile(dockerImageWorkflowPath, 'utf8');
     const build = sectionBetween(workflow, '      - name: Build and push', '      - name: Verify public GHCR pull access');

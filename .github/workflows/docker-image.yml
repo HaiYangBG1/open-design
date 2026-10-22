@@ -78,13 +78,17 @@ jobs:
             exit 1
           fi
           if [ -n "${RELEASE_VERSION:-}" ]; then
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-            echo "platforms=linux/amd64,linux/arm64" >> "$GITHUB_OUTPUT"
+            echo "publish=true"
+            echo "platforms=linux/amd64,linux/arm64"
+            printf 'revision_annotation=index:org.opencontainers.image.revision=%s\n' "$EXPECTED_REVISION"
+            printf 'version_annotation=index:org.opencontainers.image.version=%s\n' "$RELEASE_VERSION"
           else
             # pull_request and standalone workflow_dispatch: smoke only
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "platforms=linux/amd64" >> "$GITHUB_OUTPUT"
-          fi
+            echo "publish=false"
+            echo "platforms=linux/amd64"
+            echo "revision_annotation="
+            echo "version_annotation="
+          fi >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         if: ${{ steps.mode.outputs.publish == 'true' }}
@@ -167,8 +171,8 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: |
-            index:org.opencontainers.image.revision=${{ inputs.expected_revision || github.sha }}
-            index:org.opencontainers.image.version=${{ inputs.release_version || github.sha }}
+            ${{ steps.mode.outputs.revision_annotation }}
+            ${{ steps.mode.outputs.version_annotation }}
           # The in-tree Dockerfile uses node:24-alpine + apk for build
           # tooling; we keep that default so the workflow doesn't drift
           # from local builds. Spec §15.1 nominates bookworm-slim as

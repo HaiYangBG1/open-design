@@ -46,6 +46,15 @@ observed tool states. Local paths are normalized; verbose denial-rule dumps
 are omitted. CLI process exit code alone is not a success oracle: the denied
 read also exits zero, so the tool result is the relevant evidence.
 
+## Visual comparison of the recorded results
+
+![Before/after CLI log evidence and permission boundary controls](comparison.jpg)
+
+This is a browser screenshot of [the evidence page](comparison.html), assembled
+from the actual CLI results above. It is explicitly labeled as a runtime-log
+report, not an OpenDesign product UI or native Terminal screenshot. The linked
+JSON remains the primary structured evidence.
+
 ## Permission scope
 
 Only active OpenCode strategy runs gain the selected bundled strategy's

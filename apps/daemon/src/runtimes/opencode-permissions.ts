@@ -1,4 +1,6 @@
+import path from 'node:path';
 import { agentCapabilities } from './capabilities.js';
+import { execAgentFile } from './invocation.js';
 import type { RuntimeAgentDef } from './types.js';
 
 export const OPENCODE_SKIP_PERMISSIONS_FLAG = '--dangerously-skip-permissions';
@@ -15,6 +17,26 @@ export function appendOpenCodePermissionBypass(args: string[], agentId: string):
   if (agentCapabilities.get(agentId)?.skipPermissions) {
     args.push(OPENCODE_SKIP_PERMISSIONS_FLAG);
   }
+}
+
+/** OpenCode edit checks use the Git worktree, or the volume root outside Git. */
+export async function resolveOpenCodeEditBaseDir(cwd: string): Promise<string> {
+  try {
+    const { stdout } = await execAgentFile('git', ['rev-parse', '--show-toplevel'], {
+      cwd, timeout: 2_000, env: { ...process.env, LC_ALL: 'C' },
+    });
+    const root = String(stdout).trim();
+    if (path.isAbsolute(root)) return root;
+    throw new Error('Git did not return an absolute OpenCode edit base.');
+  } catch (error) {
+    const failure = error as { code?: unknown; stderr?: unknown };
+    if (failure.code !== 'ENOENT' && !String(failure.stderr ?? '').includes('not a git repository')) {
+      // An unknown worktree must not produce a resource grant with edit rules
+      // based on an unrelated root. The caller retains its no-config failure.
+      throw error;
+    }
+  }
+  return path.parse(path.resolve(cwd)).root;
 }
 
 /**

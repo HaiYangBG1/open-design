@@ -510,6 +510,7 @@ import {
 } from './runtimes/auth.js';
 import { readOpenCodeServiceFailure } from './runtimes/opencode-log.js';
 import { applyOpenCodeEventPlugin } from './runtimes/opencode-event-plugin.js';
+import { resolveOpenCodeEditBaseDir } from './runtimes/opencode-permissions.js';
 import { createAgentStderrVisibilityFilter } from './amr-stderr-filter.js';
 import { createQoderStreamHandler } from './runtimes/qoder-stream.js';
 import { subscribe as subscribeFileEvents } from './project-watchers.js';
@@ -13864,11 +13865,21 @@ export async function startServer({
     const isMiMoContent = def.externalMcpInjection === 'mimo-env-content';
     if (isOpenCodeContent || isMiMoContent) {
       try {
+        const readOnlyDirectories = isOpenCodeContent && strategyTaskAtStart
+          ? [path.join(BUNDLED_PLUGINS_DIR, 'scenarios', 'od-next-strategy', 'assets', 'task-profiles')]
+          : [];
         opencodeConfigContent = buildOpenCodeMcpConfigContent(
           enabledExternalMcp,
           oauthTokensForSpawn,
           {
             allowedDirectories: [effectiveCwd, ...extraAllowedDirs],
+            // The verified strategy prompt advertises this rule-card subtree.
+            // Grant it only to OpenCode strategy runs, with edit/write/patch
+            // denied, rather than exposing the whole plugin tree.
+            readOnlyDirectories,
+            ...(readOnlyDirectories.length > 0
+              ? { readOnlyEditBaseDir: await resolveOpenCodeEditBaseDir(effectiveCwd) }
+              : {}),
             ...(byokOpenCodeProvider
               ? { extraConfig: byokOpenCodeProvider.config }
               : {}),

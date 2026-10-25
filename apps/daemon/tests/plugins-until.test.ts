@@ -37,6 +37,27 @@ describe('parseUntil', () => {
     expect(() => parseUntil('')).toThrow(UntilSyntaxError);
   });
 
+  it.each([
+    '|| iterations >= 3',
+    'iterations >= 3 ||',
+    'iterations >= 3 || || preview.ok == true',
+    '&& iterations >= 3',
+    'iterations >= 3 &&',
+    'iterations >= 3 && && preview.ok == true',
+    'iterations >= 3 && || preview.ok == true',
+    '(iterations >= 3) || \n\t',
+  ])('rejects a missing logical operand: %s', (source) => {
+    expect(() => parseUntil(source)).toThrow(UntilSyntaxError);
+    expect(isParseableUntil(source)).toBe(false);
+  });
+
+  it('preserves valid whitespace, comparison groups, and AND/OR precedence', () => {
+    const expression = parseUntil(' (iterations >= 3) && preview.ok == true \n || user.confirmed == true ');
+    expect(evaluateUntil(expression, { iterations: 3, 'preview.ok': false, 'user.confirmed': false }).satisfied).toBe(false);
+    expect(evaluateUntil(expression, { iterations: 3, 'preview.ok': true }).satisfied).toBe(true);
+    expect(evaluateUntil(expression, { iterations: 0, 'user.confirmed': true }).satisfied).toBe(true);
+  });
+
   it('isParseableUntil returns false for syntactically broken input', () => {
     expect(isParseableUntil('critique.score nope 4')).toBe(false);
     expect(isParseableUntil('critique.score >= 4')).toBe(true);

@@ -98,7 +98,8 @@ function splitTopLevel(input: string, sep: '||' | '&&'): string[] {
     }
   }
   parts.push(input.slice(cursor));
-  return parts.map((p) => p.trim()).filter((p) => p.length > 0);
+  // Empty operands are syntax errors; dropping them silently changes the condition.
+  return parts.map((p) => p.trim());
 }
 
 function parseComparison(raw: string): UntilComparison {

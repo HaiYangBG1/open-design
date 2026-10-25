@@ -1,0 +1,104 @@
+{
+  "baseline": "9724c44142ea0afaee3d207f37901b31c66a44ad",
+  "host": "macOS 27.0.1 arm64",
+  "node": "24.19.0",
+  "pnpm": "10.33.2",
+  "command": "node apps/daemon/dist/cli.js plugin validate <fixture> --no-daemon --json",
+  "boundary": "Real compiled OpenDesign CLI, same local plugin manifests; paths normalized. No daemon, provider, or model involved.",
+  "before": [
+    {
+      "case": "trailing-or",
+      "until": "iterations >= 3 ||",
+      "exitCode": 0,
+      "response": {
+        "ok": true,
+        "folder": "<fixture>/trailing-or",
+        "freshDigest": "aa844896a55186294ca9aa3a291969680631bfd7dfa524186e821a93a1109adc",
+        "pluginId": "until-repro",
+        "diagnostics": []
+      },
+      "stderr": ""
+    },
+    {
+      "case": "repeated-and",
+      "until": "iterations >= 3 && && preview.ok == true",
+      "exitCode": 0,
+      "response": {
+        "ok": true,
+        "folder": "<fixture>/repeated-and",
+        "freshDigest": "5bc6bd330e42b378dcb737dc5150b8e23f2921ee1771420df9198847fbc70b98",
+        "pluginId": "until-repro",
+        "diagnostics": []
+      },
+      "stderr": ""
+    },
+    {
+      "case": "valid",
+      "until": "iterations >= 3 && preview.ok == true || user.confirmed == true",
+      "exitCode": 0,
+      "response": {
+        "ok": true,
+        "folder": "<fixture>/valid",
+        "freshDigest": "ef542f6a90197f7ae673a0d3fcf39435df256185b82495c16ae9e214fc50f021",
+        "pluginId": "until-repro",
+        "diagnostics": []
+      },
+      "stderr": ""
+    }
+  ],
+  "after": [
+    {
+      "case": "trailing-or",
+      "until": "iterations >= 3 ||",
+      "exitCode": 4,
+      "response": {
+        "ok": false,
+        "folder": "<fixture>/trailing-or",
+        "freshDigest": "aa844896a55186294ca9aa3a291969680631bfd7dfa524186e821a93a1109adc",
+        "pluginId": "until-repro",
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "pipeline.until-invalid",
+            "message": "Pipeline stage 'critique' has an unparseable until expression: 'iterations >= 3 ||'.",
+            "field": "od.pipeline.stages.critique"
+          }
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "case": "repeated-and",
+      "until": "iterations >= 3 && && preview.ok == true",
+      "exitCode": 4,
+      "response": {
+        "ok": false,
+        "folder": "<fixture>/repeated-and",
+        "freshDigest": "5bc6bd330e42b378dcb737dc5150b8e23f2921ee1771420df9198847fbc70b98",
+        "pluginId": "until-repro",
+        "diagnostics": [
+          {
+            "severity": "error",
+            "code": "pipeline.until-invalid",
+            "message": "Pipeline stage 'critique' has an unparseable until expression: 'iterations >= 3 && && preview.ok == true'.",
+            "field": "od.pipeline.stages.critique"
+          }
+        ]
+      },
+      "stderr": ""
+    },
+    {
+      "case": "valid",
+      "until": "iterations >= 3 && preview.ok == true || user.confirmed == true",
+      "exitCode": 0,
+      "response": {
+        "ok": true,
+        "folder": "<fixture>/valid",
+        "freshDigest": "ef542f6a90197f7ae673a0d3fcf39435df256185b82495c16ae9e214fc50f021",
+        "pluginId": "until-repro",
+        "diagnostics": []
+      },
+      "stderr": ""
+    }
+  ]
+}

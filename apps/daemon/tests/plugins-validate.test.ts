@@ -94,6 +94,23 @@ describe('validatePluginFolder', () => {
     expect(diagnostics.some((d) => d.severity === 'error' && d.code.includes('until'))).toBe(true);
   });
 
+  it.each(['iterations >= 3 ||', 'iterations >= 3 && && preview.ok == true'])(
+    'reports a missing until operand instead of validating the plugin: %s', async (until) => {
+      await writeManifest({
+        name: 'pipe', version: '0.1.0',
+        od: {
+          taskKind: 'new-generation',
+          pipeline: { stages: [{ id: 'critique', atoms: ['critique-theater'], repeat: true, until }] },
+        },
+      });
+      const result = await validatePluginFolder({ folder });
+      expect(flattenValidationDiagnostics(result)).toContainEqual(expect.objectContaining({
+        severity: 'error', code: 'pipeline.until-invalid', field: 'od.pipeline.stages.critique',
+      }));
+      expect(result.ok).toBe(false);
+    },
+  );
+
   it('emits warnings (not errors) for unresolved skill refs when no registry is supplied', async () => {
     await writeManifest({
       name: 'with-skill',

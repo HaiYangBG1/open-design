@@ -11,7 +11,7 @@
 //     surface emits a `genui_surface_response { respondedBy: 'cache' }`
 //     event without broadcasting a new request.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -25,7 +25,7 @@ import type {
 import { migratePlugins } from '../src/plugins/persistence.js';
 import { createSnapshot } from '../src/plugins/snapshots.js';
 import { runPipelineForRun } from '../src/plugins/pipeline-runner.js';
-import { listIterationsForRun } from '../src/plugins/pipeline.js';
+import { listIterationsForRun, PipelineConfigError } from '../src/plugins/pipeline.js';
 import { respondSurface } from '../src/genui/registry.js';
 import { findPendingByRunAndSurfaceId } from '../src/genui/store.js';
 import type { RunEventForAnalyticsObservability } from '../src/run-analytics-observability.js';
@@ -88,6 +88,24 @@ function snapshotWith(extra: Partial<AppliedPluginSnapshot>): AppliedPluginSnaps
 }
 
 describe('pipeline-runner: stage events + devloop persistence', () => {
+  it.each(['iterations >= 1 ||', 'iterations >= 1 && && preview.ok == true'])(
+    'refuses to schedule a stage with a missing until operand: %s', async (until) => {
+      const snap = snapshotWith({
+        pipeline: { stages: [{ id: 'critique', atoms: ['critique-theater'], repeat: true, until }] },
+      });
+      const runStage = vi.fn(() => ({ signals: { 'preview.ok': true } }));
+      const events: PluginPipelineStageEvent[] = [];
+      await expect(runPipelineForRun({
+        db, runId: 'run-invalid-until', projectId: 'project-1', conversationId: 'conv-A',
+        snapshot: snap, pipeline: snap.pipeline!, env: { maxIterations: 3 }, runStage,
+        emitPipeline: (event) => events.push(event),
+      })).rejects.toThrow(PipelineConfigError);
+      expect(runStage).not.toHaveBeenCalled();
+      expect(events).toEqual([]);
+      expect(listIterationsForRun(db, 'run-invalid-until')).toEqual([]);
+    },
+  );
+
   it('emits started + completed events for every stage and persists iterations', async () => {
     const snap = snapshotWith({
       pipeline: {

@@ -48,6 +48,7 @@ import type {
 
 import {
   loadOdNextTaskResourcesForSnapshot,
+  loadOdNextTaskAssetsForSnapshot,
   materializeOdNextDeviceFrames,
   observeOdNextDeviceShell,
   observeOdNextLayoutPrimitives,
@@ -12059,6 +12060,25 @@ export async function startServer({
         cwd,
       });
     }
+    // Frozen tasks bypass ordinary prompt composition. Resolve access from the
+    // verified applied package here, alongside the resources every run consumes.
+    let strategyTaskAssets: Awaited<ReturnType<typeof loadOdNextTaskAssetsForSnapshot>> = {
+      taskProfileRoot: null,
+      resources: [],
+    };
+    try {
+      strategyTaskAssets = await loadOdNextTaskAssetsForSnapshot({
+        bundledPluginsDir: BUNDLED_PLUGINS_DIR,
+        snapshot: typeof run.appliedPluginSnapshotId === 'string'
+          ? getSnapshot(db, run.appliedPluginSnapshotId)
+          : null,
+      });
+    } catch (err) {
+      // Unverified assets grant no access, but must not block a frozen run.
+      console.warn(
+        `[od-next-task-assets] loading skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     // OD Next task-profile resources (the handheld shells for prototype
     // tasks) are staged beside the frozen Skills on every strategy run, so the
     // rule card's `.od-frames/<shell>.html` paths resolve even when no platform
@@ -12068,10 +12088,7 @@ export async function startServer({
       try {
         const staging = await materializeOdNextDeviceFrames({
           cwd,
-          resources: await loadOdNextTaskResourcesForSnapshot({
-            bundledPluginsDir: BUNDLED_PLUGINS_DIR,
-            snapshot: getSnapshot(db, run.appliedPluginSnapshotId),
-          }),
+          resources: strategyTaskAssets.resources,
         });
         if (staging.staged.length > 0) run.odNextStagedDeviceFrames = staging.staged;
         if (staging.skipped.length > 0) {
@@ -12394,6 +12411,7 @@ export async function startServer({
         resolveRunArtifactOutcomeBeforeFinish();
       }
     };
+    const isOpenCodeContent = def.externalMcpInjection === 'opencode-env-content';
     const extraAllowedDirs = [
       ...resolveChatExtraAllowedDirs({
         agentId,
@@ -12401,6 +12419,11 @@ export async function startServer({
         designSystemsDir: DESIGN_SYSTEMS_DIR,
         linkedDirs,
         activeSkillDirs,
+        // OpenCode grants this root only after its read-only edit boundary is
+        // resolved below. A generic grant would bypass that failure boundary.
+        strategyResourceDirs: !isOpenCodeContent && strategyTaskAssets.taskProfileRoot
+          ? [strategyTaskAssets.taskProfileRoot]
+          : [],
       }),
       ...(odNextTaskInputSnapshot
         ? [odNextTaskInputSnapshot.projectionAccessRoot]
@@ -13861,24 +13884,32 @@ export async function startServer({
     // mcp section for this single invocation, which is exactly the kind
     // of surprise the previous silent-failure UX taught us to avoid.
     let opencodeConfigContent: string | null = null;
-    const isOpenCodeContent = def.externalMcpInjection === 'opencode-env-content';
     const isMiMoContent = def.externalMcpInjection === 'mimo-env-content';
     if (isOpenCodeContent || isMiMoContent) {
       try {
-        const readOnlyDirectories = isOpenCodeContent && strategyTaskAtStart
-          ? [path.join(BUNDLED_PLUGINS_DIR, 'scenarios', 'od-next-strategy', 'assets', 'task-profiles')]
-          : [];
+        let readOnlyDirectories: string[] = [];
+        let readOnlyEditBaseDir: string | undefined;
+        if (isOpenCodeContent && strategyTaskAssets.taskProfileRoot) {
+          try {
+            readOnlyEditBaseDir = await resolveOpenCodeEditBaseDir(effectiveCwd);
+            readOnlyDirectories = [strategyTaskAssets.taskProfileRoot];
+          } catch (err) {
+            // Withhold only this resource grant; MCP, provider and ordinary
+            // project permissions must still reach the child process.
+            console.warn(
+              `[opencode-resource-permissions] grant skipped: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
         opencodeConfigContent = buildOpenCodeMcpConfigContent(
           enabledExternalMcp,
           oauthTokensForSpawn,
           {
             allowedDirectories: [effectiveCwd, ...extraAllowedDirs],
-            // The verified strategy prompt advertises this rule-card subtree.
-            // Grant it only to OpenCode strategy runs, with edit/write/patch
-            // denied, rather than exposing the whole plugin tree.
+            // Only the verified loader result may authorize rule cards.
             readOnlyDirectories,
-            ...(readOnlyDirectories.length > 0
-              ? { readOnlyEditBaseDir: await resolveOpenCodeEditBaseDir(effectiveCwd) }
+            ...(readOnlyEditBaseDir
+              ? { readOnlyEditBaseDir }
               : {}),
             ...(byokOpenCodeProvider
               ? { extraConfig: byokOpenCodeProvider.config }
@@ -18514,13 +18545,17 @@ export async function startServer({
         // the log tail that packaged startup telemetry samples.
         daemonHealth?.enableFatalReports();
         daemonHealth?.setAppVersion(currentAppVersion());
-        daemonHealth?.attachSink(({ eventName, properties, insertId }) =>
-          analyticsService.captureSafety({
-            eventName,
-            appVersion: currentAppVersion(),
-            properties,
-            insertId,
-          }));
+        daemonHealth?.attachSink(({ eventName, properties, insertId }) => {
+          const capture = { eventName, appVersion: currentAppVersion(), properties, insertId };
+          // Periodic health/metric events wait for the installation identity
+          // like every other stability metric (OPEND-4220 retest 2). Fault
+          // signals (unclean exit, memory pressure) stay immediate.
+          return eventName === 'client_process_memory_sample'
+            || eventName === 'daemon_storage_snapshot'
+            || eventName === 'daemon_health_summary'
+            ? telemetry.captureStabilityMetric(capture)
+            : analyticsService.captureSafety(capture);
+        });
         // When binding to all interfaces report localhost for local callers;
         // when binding to a specific address (e.g. a Tailscale IP) report that
         // address so remote callers and the sidecar use the correct URL.

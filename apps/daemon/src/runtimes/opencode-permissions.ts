@@ -29,10 +29,10 @@ export async function resolveOpenCodeEditBaseDir(cwd: string): Promise<string> {
     if (path.isAbsolute(root)) return root;
     throw new Error('Git did not return an absolute OpenCode edit base.');
   } catch (error) {
-    const failure = error as { code?: unknown; stderr?: unknown };
-    if (failure.code !== 'ENOENT' && !String(failure.stderr ?? '').includes('not a git repository')) {
+    const failure = error as { stderr?: unknown };
+    if (!String(failure.stderr ?? '').includes('not a git repository')) {
       // An unknown worktree must not produce a resource grant with edit rules
-      // based on an unrelated root. The caller retains its no-config failure.
+      // based on an unrelated root. The caller withholds this resource grant.
       throw error;
     }
   }

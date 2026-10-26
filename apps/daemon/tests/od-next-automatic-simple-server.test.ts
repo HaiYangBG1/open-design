@@ -47,6 +47,7 @@ import {
 } from '../src/plugins/registry.js';
 import { startServer } from '../src/server.js';
 import * as automaticProduction from '../src/strategies/od-next/automatic-simple-production.js';
+import * as deviceFrames from '../src/strategies/od-next/device-frames.js';
 import {
   getStrategyTaskExecution
 } from '../src/strategies/task-store.js';
@@ -627,9 +628,10 @@ process.exit(127);
     }
   });
 
-  it('passes bundled task-profile permissions to the actual OpenCode child on a frozen strategy run', async () => {
+  it.each(['available', 'unavailable'] as const)('starts a frozen OpenCode run with bundled task assets %s and grants only verified access', async (availability) => {
     delete process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY;
-    const fixture = await createPublicRolloutFixture('opencode-resource-access', 'design');
+    const label = `opencode-resource-access-${availability}`;
+    const fixture = await createPublicRolloutFixture(label, 'design');
     started = fixture.started; binDir = fixture.binDir;
     const bin = path.join(binDir, 'opencode-resource-access');
     const configPath = path.join(binDir, 'spawn-config.json');
@@ -655,8 +657,13 @@ process.stdin.on('end', () => {
       body: JSON.stringify({ agentId: 'opencode', agentCliEnv: { opencode: { OPENCODE_BIN: bin } }, odNextStrategyMode: 'active' }),
     });
     expect(configured.status).toBe(200);
+    const warning = vi.spyOn(console, 'warn');
+    if (availability === 'unavailable') {
+      vi.spyOn(deviceFrames, 'loadOdNextTaskAssetsForSnapshot')
+        .mockRejectedValue(new Error('Bundled strategy package identity drift'));
+    }
     const created = await postRun(started.url, {
-      ...publicRunRequest(fixture, 'Build a motion page.', 'opencode-resource-access'),
+      ...publicRunRequest(fixture, 'Build a motion page.', label),
       agentId: 'opencode',
     });
     expect(created.strategyTask, JSON.stringify(created)).toBeDefined();
@@ -670,7 +677,12 @@ process.stdin.on('end', () => {
     expect(invocation.stdin).toContain('skill_name="discovery"');
     const bundledRoot = path.join(REPO_ROOT, 'plugins/_official');
     const root = path.join(bundledRoot, 'scenarios/od-next-strategy/assets/task-profiles');
-    expect(invocation.config.permission.external_directory[path.join(root, '*')]).toBe('allow');
+    if (availability === 'available') {
+      expect(invocation.config.permission.external_directory[path.join(root, '*')]).toBe('allow');
+    } else {
+      expect(invocation.config.permission.external_directory[path.join(root, '*')]).toBeUndefined();
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining('Bundled strategy package identity drift'));
+    }
     expect(invocation.config.permission.external_directory[path.join(bundledRoot, '*')]).toBeUndefined();
   });
 

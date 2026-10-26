@@ -12061,12 +12061,23 @@ export async function startServer({
     }
     // Frozen tasks bypass ordinary prompt composition. Resolve access from the
     // verified applied package here, alongside the resources every run consumes.
-    const strategyTaskAssets = await loadOdNextTaskAssetsForSnapshot({
-      bundledPluginsDir: BUNDLED_PLUGINS_DIR,
-      snapshot: typeof run.appliedPluginSnapshotId === 'string'
-        ? getSnapshot(db, run.appliedPluginSnapshotId)
-        : null,
-    });
+    let strategyTaskAssets: Awaited<ReturnType<typeof loadOdNextTaskAssetsForSnapshot>> = {
+      taskProfileRoot: null,
+      resources: [],
+    };
+    try {
+      strategyTaskAssets = await loadOdNextTaskAssetsForSnapshot({
+        bundledPluginsDir: BUNDLED_PLUGINS_DIR,
+        snapshot: typeof run.appliedPluginSnapshotId === 'string'
+          ? getSnapshot(db, run.appliedPluginSnapshotId)
+          : null,
+      });
+    } catch (err) {
+      // Unverified assets grant no access, but must not block a frozen run.
+      console.warn(
+        `[od-next-task-assets] loading skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     // OD Next task-profile resources (the handheld shells for prototype
     // tasks) are staged beside the frozen Skills on every strategy run, so the
     // rule card's `.od-frames/<shell>.html` paths resolve even when no platform

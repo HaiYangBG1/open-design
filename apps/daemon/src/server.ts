@@ -48,6 +48,7 @@ import type {
 
 import {
   loadOdNextTaskResourcesForSnapshot,
+  loadOdNextTaskAssetsForSnapshot,
   materializeOdNextDeviceFrames,
   observeOdNextDeviceShell,
   observeOdNextLayoutPrimitives,
@@ -12058,6 +12059,14 @@ export async function startServer({
         cwd,
       });
     }
+    // Frozen tasks bypass ordinary prompt composition. Resolve access from the
+    // verified applied package here, alongside the resources every run consumes.
+    const strategyTaskAssets = await loadOdNextTaskAssetsForSnapshot({
+      bundledPluginsDir: BUNDLED_PLUGINS_DIR,
+      snapshot: typeof run.appliedPluginSnapshotId === 'string'
+        ? getSnapshot(db, run.appliedPluginSnapshotId)
+        : null,
+    });
     // OD Next task-profile resources (the handheld shells for prototype
     // tasks) are staged beside the frozen Skills on every strategy run, so the
     // rule card's `.od-frames/<shell>.html` paths resolve even when no platform
@@ -12067,10 +12076,7 @@ export async function startServer({
       try {
         const staging = await materializeOdNextDeviceFrames({
           cwd,
-          resources: await loadOdNextTaskResourcesForSnapshot({
-            bundledPluginsDir: BUNDLED_PLUGINS_DIR,
-            snapshot: getSnapshot(db, run.appliedPluginSnapshotId),
-          }),
+          resources: strategyTaskAssets.resources,
         });
         if (staging.staged.length > 0) run.odNextStagedDeviceFrames = staging.staged;
         if (staging.skipped.length > 0) {
@@ -12400,6 +12406,9 @@ export async function startServer({
         designSystemsDir: DESIGN_SYSTEMS_DIR,
         linkedDirs,
         activeSkillDirs,
+        strategyResourceDirs: strategyTaskAssets.taskProfileRoot
+          ? [strategyTaskAssets.taskProfileRoot]
+          : [],
       }),
       ...(odNextTaskInputSnapshot
         ? [odNextTaskInputSnapshot.projectionAccessRoot]

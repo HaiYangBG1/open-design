@@ -627,6 +627,53 @@ process.exit(127);
     }
   });
 
+  it('passes bundled task-profile permissions to the actual OpenCode child on a frozen strategy run', async () => {
+    delete process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY;
+    const fixture = await createPublicRolloutFixture('opencode-resource-access', 'design');
+    started = fixture.started; binDir = fixture.binDir;
+    const bin = path.join(binDir, 'opencode-resource-access');
+    const configPath = path.join(binDir, 'spawn-config.json');
+    await writeFile(bin, `#!/usr/bin/env node
+const fs = require('node:fs');
+const argv = process.argv.slice(2);
+if (argv.includes('--version')) { console.log('1.18.18'); process.exit(0); }
+if (argv.includes('--help')) { console.log('Usage: opencode run --format --dir'); process.exit(0); }
+if (argv[0] !== 'run') { console.log('[]'); process.exit(0); }
+let stdin = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', chunk => { stdin += chunk; });
+process.stdin.on('end', () => {
+  fs.writeFileSync(${JSON.stringify(configPath)}, JSON.stringify({ argv, stdin, config: JSON.parse(process.env.OPENCODE_CONFIG_CONTENT || '{}') }));
+  console.log(JSON.stringify({ type: 'step_start' }));
+  console.log(JSON.stringify({ type: 'text', part: { text: 'Permission fixture completed.' } }));
+  console.log(JSON.stringify({ type: 'step_finish', part: { tokens: { input: 1, output: 1 } } }));
+});
+`);
+    await chmod(bin, 0o755);
+    const configured = await fetch(`${started.url}/api/app-config`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ agentId: 'opencode', agentCliEnv: { opencode: { OPENCODE_BIN: bin } }, odNextStrategyMode: 'active' }),
+    });
+    expect(configured.status).toBe(200);
+    const created = await postRun(started.url, {
+      ...publicRunRequest(fixture, 'Build a motion page.', 'opencode-resource-access'),
+      agentId: 'opencode',
+    });
+    expect(created.strategyTask, JSON.stringify(created)).toBeDefined();
+    await waitForRunTerminal(started.url, created.runId as string);
+    const invocation = JSON.parse(await readFile(configPath, 'utf8')) as {
+      argv: string[];
+      stdin: string;
+      config: { permission: { external_directory: Record<string, string> } };
+    };
+    expect(invocation.argv).not.toContain('--dangerously-skip-permissions');
+    expect(invocation.stdin).toContain('skill_name="discovery"');
+    const bundledRoot = path.join(REPO_ROOT, 'plugins/_official');
+    const root = path.join(bundledRoot, 'scenarios/od-next-strategy/assets/task-profiles');
+    expect(invocation.config.permission.external_directory[path.join(root, '*')]).toBe('allow');
+    expect(invocation.config.permission.external_directory[path.join(bundledRoot, '*')]).toBeUndefined();
+  });
+
   it('runs an unregistered non-resume Qoder through public cold production and follow-ups', async () => {
     delete process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY;
     const fixture = await createPublicRolloutFixture('qoder-cold', 'design');

@@ -1,5 +1,7 @@
 # OD Next task-profile access (#9049)
 
+The original reproduction below retains its original conditions. For the #9073 integration, newly discovered failure paths, and fresh validation, see [integration evidence](integration/README.md).
+
 ## Reproduction boundary
 
 Baseline: `9724c44142ea0afaee3d207f37901b31c66a44ad`.

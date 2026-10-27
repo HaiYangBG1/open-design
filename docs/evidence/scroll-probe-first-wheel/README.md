@@ -163,10 +163,39 @@ The ordinary configuration also passes the reattachment suite together with
 `tests/observability/chat-scroll-freeze.test.ts`, 68 tests in total. The temporary
 setup above is diagnostic only and is not loaded by normal tests or CI.
 
-The complete previously failing shard also passed locally with
+Before syncing the later upstream changes, the complete previously failing
+shard at `1591ddcaf` also passed locally with
 `CI=true pnpm --filter @open-design/web exec vitest run -c vitest.config.ts --maxWorkers=2 --shard=2/2 --retry=0`.
 It reported 632 files and 6,546 passing tests, one existing expected failure,
 seven existing skips, and no unhandled errors in 435.02 seconds. Root
 `pnpm guard`, root `pnpm typecheck`, and `git diff --check` passed as well.
 These are macOS ARM64 results; hosted CI and manual product QA remain separate
 validation surfaces.
+
+### Integration with upstream compositor recovery
+
+The [first follow-up's hosted run](https://github.com/nexu-io/open-design/actions/runs/40549338229/job/122348911745)
+reported no unhandled errors, but its current-main merge exposed a different
+failure in `chat-scroll-takeover-selfheal.test.ts`. The test introduced by
+upstream #8251 explicitly counted the first discovery wheel twice. It expected
+a fresh surface to freeze after only three physical wheels, conflicting with
+this PR's one-event intake contract.
+
+The branch now includes main `b7c5dd6d350bf54587a76bef1899bcbc183ea59d`.
+The release test first asserts that three physical wheels leave the new surface
+idle with no additional frozen report. A fourth wheel must produce its own
+probe ID, exactly `FREEZE_WHEEL_COUNT` events and the matching requested delta,
+then enter the existing compositor kick phase.
+
+The old upstream test reproduces the hosted missing-report assertion on the
+integrated branch. Conversely, the strengthened test fails at the below-threshold
+assertion when only the probe source is temporarily restored from upstream main,
+then passes with the PR implementation. This verifies both sides of the threshold
+without changing the detector or weakening the takeover assertions.
+
+The reattachment, probe, takeover and self-heal files pass 126 tests with two
+workers and no retries on the integrated tree. Full web-suite coverage is left
+to PR CI, following main's current local-validation policy.
+The controlled teardown witness also passes on this tree, as do root
+`pnpm guard`, root `pnpm typecheck`, and the PR diff whitespace check against
+upstream main.

@@ -119,11 +119,13 @@ import {
 } from '../runtime/amr-balance-branch';
 import { installDeepSeekHarnessCompanion } from '../providers/agent-companion';
 import {
+  amrBalanceGateFromMemory,
   amrBalanceGateScopeForWorkspaceContext,
   checkAmrBalanceGate,
   retryUnavailableAmrBalanceGate,
   type AmrBalanceGateScope,
 } from '../runtime/amr-balance-gate';
+import { cachedHomeAmrFundingBlock, checkAmrFundingFeedback, invalidateAmrFundingFeedback } from '../runtime/amr-funding-feedback';
 import { HomeView, seedHomeComposerPrompt } from './HomeView';
 import { entryStrategyRoutingFields } from './entry-strategy-routing';
 import { EntryBlankState } from './EntryBlankState';
@@ -151,10 +153,12 @@ import { TeamSlotPlaceholder } from './TeamSlotPlaceholder';
 import {
   notifyTeamProjectsChanged,
   notifyWorkspaceBillingRefresh,
+  shouldRefreshWorkspaceBilling,
   notifyWorkspaceContextRefresh,
   currentWorkspaceAccountGeneration,
   useTeamProjects,
   useWorkspaceBillingResponse,
+  WORKSPACE_BILLING_REFRESH_EVENT,
   useWorkspaceContext,
   workspaceResourceReadContext,
   workspaceBillingBalanceUsd,
@@ -750,6 +754,47 @@ export function EntryShell({
     workspaceBillingResponse,
     workspaceContext,
   );
+  const homeFundingModelId = config.mode === 'daemon' && config.agentId === 'amr'
+    ? effectiveAgentModelId(agents.find((agent) => agent.id === 'amr'), config.agentModels?.amr) ?? null
+    : null;
+  const homeFundingContext = workspaceContextState.failure === 'unsupported'
+    ? null : workspaceResourceReadContext(workspaceContextState);
+  const homeFundingScope = amrBalanceGateScopeForWorkspaceContext(homeFundingContext);
+  const homeFundingIdentity = view === 'home' && config.mode === 'daemon' && config.agentId === 'amr' && homeFundingScope
+    ? JSON.stringify([currentWorkspaceAccountGeneration(), homeFundingScope, homeFundingModelId]) : null;
+  const homeFundingIdentityRef = useRef(homeFundingIdentity);
+  homeFundingIdentityRef.current = homeFundingIdentity;
+  const cancelHomeFundingDialogRef = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (!homeFundingIdentity) return;
+    // Warm once per Home/account/member/model selection. Never poll or wait
+    // for this read on a cache miss in the submit path.
+    void checkAmrFundingFeedback(homeFundingScope, homeFundingModelId);
+    const invalidate = () => invalidateAmrFundingFeedback();
+    window.addEventListener(WORKSPACE_BILLING_REFRESH_EVENT, invalidate);
+    return () => {
+      window.removeEventListener(WORKSPACE_BILLING_REFRESH_EVENT, invalidate);
+      cancelHomeFundingDialogRef.current?.();
+    };
+    // The identity contains all scope/model fields; object allocation must not
+    // trigger more requests on unrelated composer renders.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homeFundingIdentity]);
+  useEffect(() => {
+    // Reuse successful scoped billing publications (SSE, focus or fallback).
+    // Only an existing Home block needs this extra model-specific recovery read.
+    if (!homeFundingIdentity || !homeFundingScope || !workspaceBillingResponse ||
+      workspaceBillingBalanceUsd(workspaceBillingResponse, homeFundingContext) == null ||
+      !cachedHomeAmrFundingBlock(homeFundingScope, homeFundingModelId)) return;
+    let active = true;
+    invalidateAmrFundingFeedback();
+    void checkAmrFundingFeedback(homeFundingScope, homeFundingModelId,
+      () => active && homeFundingIdentityRef.current === homeFundingIdentity);
+    return () => { active = false; };
+    // Billing response identity changes only when the shared hook publishes a
+    // new read. Unrelated composer renders must not schedule recovery requests.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [homeFundingIdentity, workspaceBillingResponse]);
   const [goPlanSunsetMessagePending, setGoPlanSunsetMessagePending] = useState(false);
   const deepSeekCampaignVisibility = useDeepSeekV4FlashCampaignVisibility();
   // Same personal-vs-team accountPlan rule as App's `resolvedAmrPlan`.
@@ -981,7 +1026,15 @@ export function EntryShell({
     workspaceContext?.workspaceId,
     workspaceContext?.workspaceType,
   ]);
+  const invalidateHomeFunding = (event: Parameters<typeof shouldRefreshWorkspaceBilling>[0]) => {
+    if (shouldRefreshWorkspaceBilling(event, homeFundingContext)) invalidateAmrFundingFeedback();
+  };
   useWorkspaceInvalidation({
+    // Reuse the billing stream to expire hints, without adding funding reads.
+    'billing-changed': invalidateHomeFunding,
+    'billing-subscription-changed': invalidateHomeFunding,
+    'wallet-balance-changed': invalidateHomeFunding,
+    'coding-plan-usage-changed': invalidateHomeFunding,
     'team-project-content-ready': ({ projectId, workspaceId }) => {
       const currentWorkspaceId = workspaceContext?.workspaceId;
       const currentWorkspaceMemberId = workspaceContext?.workspaceMemberId;
@@ -1309,7 +1362,7 @@ export function EntryShell({
   function usePluginFromLibrary(
     record: InstalledPluginRecord,
     action: PluginUseAction = 'use',
-    homeType?: { chipId: string; projectKind: ProjectKind },
+    homeType?: { chipId: string; projectKind: ProjectKind; asExample?: boolean; useTracked?: boolean },
   ) {
     setHomePromptHandoff(
       createPluginUseHandoff(Date.now(), record.id, { action, ...homeType }),
@@ -1444,17 +1497,58 @@ export function EntryShell({
           config.agentModels?.amr,
         )
       : undefined;
-    // OPEND-2614: the project frame opens on the click tick for EVERY agent,
+    if (isAmrSend) {
+      const scope = amrBalanceGateScopeForWorkspaceContext(
+        workspaceContextStateRef.current.failure === 'unsupported'
+          ? null : workspaceResourceReadContext(workspaceContextStateRef.current),
+      );
+      // Restore #8240's pre-handoff memory gate using both the wallet and
+      // Coding Plan projection. The existing billing stream/fallback refreshes
+      // this projection; confirmed backend insufficiency survives cache refreshes.
+      const memoryBlock = amrBalanceGateFromMemory(
+        workspaceBillingBalanceUsd(workspaceBillingResponse, homeFundingContext),
+        { scope, modelId: amrModelId, preflight: workspaceBillingResponse?.preflight, profile: amrProfile },
+      );
+      const cachedBlock = cachedHomeAmrFundingBlock(scope, amrModelId ?? null, memoryBlock?.snapshot);
+      if (cachedBlock) {
+        const identity = homeFundingIdentityRef.current;
+        const accountGeneration = currentWorkspaceAccountGeneration();
+        const branch = resolveAmrBalanceBranch({ context: homeFundingContext, billing: workspaceBilling });
+        const decision = await new Promise<'retry' | 'dismiss'>((resolve) => {
+          let settled = false;
+          const finish = (value: 'retry' | 'dismiss') => {
+            if (settled) return;
+            settled = true;
+            cancelHomeFundingDialogRef.current = null;
+            resolve(value);
+          };
+          cancelHomeFundingDialogRef.current = () => finish('dismiss');
+          onAmrBalanceGateBlockChange({
+            reason: 'insufficient', dialog: amrBalanceBlockedDialog(branch),
+            upgradeIntent: amrBalanceDialogUpgradeIntent(branch), snapshot: { ...cachedBlock, profile: amrProfile ?? cachedBlock.profile },
+            modelId: amrModelId, fundingScope: scope, resolve: finish,
+          });
+          // Refresh the hint for the user's next send. Background confirmation
+          // must not dismiss this dialog or submit the parked draft.
+          void checkAmrFundingFeedback(scope, amrModelId ?? null).then(() => {
+            if (identity !== homeFundingIdentityRef.current || accountGeneration !== currentWorkspaceAccountGeneration()) finish('dismiss');
+          });
+        });
+        onAmrBalanceGateBlockChange(null);
+        if (decision === 'dismiss' || identity !== homeFundingIdentityRef.current || accountGeneration !== currentWorkspaceAccountGeneration()) return 'blocked' as const;
+        invalidateAmrFundingFeedback();
+      }
+    }
+    // Without known negative evidence, the project frame opens on the click tick,
     // before any admission check. Everything below runs behind that frame —
     // this shell is unmounted the moment the hand-off navigates, so nothing
     // after this line may rely on this instance's state or DOM. App owns the
     // hand-off and the way back.
     const handoff = onBeginProjectCreation(createInput);
-    // OpenDesign Cloud pre-run balance gate: hard blocks (empty wallet or
-    // signed out) fire BEFORE the project is created — the dialog now sits over
-    // the pending frame, and a dismiss rolls the hand-off back to Home with the
-    // composer draft intact. In-project sends are gated separately in
-    // ProjectView.handleSend.
+    // Confirm sign-in behind the pending frame. Workspace billing is not a
+    // send prerequisite: Link admits funding when the run starts, and
+    // ProjectView presents any live funding rejection without waiting on a
+    // display-wallet read. Dismissing a sign-in block restores the Home draft.
     let amrGatePrecheckWitness: AmrBalanceGateScope | undefined;
     let amrGatePrecheckPassed = false;
     if (isAmrSend) {
@@ -2081,6 +2175,9 @@ export function EntryShell({
                   usePluginFromLibrary(record, action, {
                     chipId: target.chipId,
                     projectKind: target.projectKind,
+                    asExample: target.asExample,
+                    // Community records its own use click.
+                    useTracked: true,
                   });
                 }}
               />
@@ -4190,6 +4287,7 @@ function OnboardingByokSetupPanel({
             placement="top"
             searchable
             searchPlaceholder={t('newproj.modelSearch')}
+            allowCustomValue
           />
         ) : (
           <label className="onboarding-view__inline-field">
@@ -4425,6 +4523,13 @@ type OnboardingDropdownBaseProps = {
   searchPlaceholder?: string;
   sourceTone?: string;
   allowEmptyValue?: boolean;
+  /**
+   * When true (and not multi-select), a typed search query that doesn't match
+   * any existing option is offered as a selectable "Use '<query>'" entry, so
+   * users can pick a value that isn't in the suggested list (e.g. a locally
+   * installed Ollama model).
+   */
+  allowCustomValue?: boolean;
 };
 
 type OnboardingDropdownProps =
@@ -4452,6 +4557,7 @@ export function OnboardingDropdown(props: OnboardingDropdownProps) {
     searchPlaceholder,
     sourceTone,
     allowEmptyValue = false,
+    allowCustomValue = false,
   } = props;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -4477,12 +4583,27 @@ export function OnboardingDropdown(props: OnboardingDropdownProps) {
     : undefined;
   const triggerLabel = selectedLabel || placeholder;
   const normalizedQuery = query.trim().toLowerCase();
-  const visibleOptions =
+  const trimmedQuery = query.trim();
+  const filteredOptions =
     searchable && normalizedQuery
       ? options.filter((option) =>
           `${option.label} ${option.value}`.toLowerCase().includes(normalizedQuery),
         )
       : options;
+  const canUseCustomValue =
+    allowCustomValue &&
+    !multiple &&
+    trimmedQuery.length > 0 &&
+    !options.some((option) => option.value.toLowerCase() === normalizedQuery);
+  const visibleOptions = canUseCustomValue
+    ? [
+        ...filteredOptions,
+        {
+          value: trimmedQuery,
+          label: t('settings.onboardingModelUseCustom', { query: trimmedQuery }),
+        },
+      ]
+    : filteredOptions;
   const emptyMessage = searchable ? t('homeHero.footer.noMatches') : t('settings.fetchModelsEmpty');
 
   useLayoutEffect(() => {

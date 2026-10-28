@@ -686,8 +686,8 @@ process.stdin.on('end', () => {
         vi.spyOn(deviceFrames, 'loadOdNextTaskAssetsForSnapshot')
           .mockRejectedValue(new Error('Bundled strategy package identity drift'));
       } else if (availability === 'edit-base-unavailable') {
-        vi.spyOn(openCodePermissions, 'resolveOpenCodeEditBaseDir')
-          .mockRejectedValue(new Error('Fixture Git probe failed'));
+        vi.spyOn(openCodePermissions, 'resolveOpenCodeEditBaseDirs')
+          .mockRejectedValue(new Error('Fixture edit base unconfirmed'));
       } else if (availability === 'git-probe-failed') {
         const runAgentFile = invocationModule.execAgentFile;
         vi.spyOn(invocationModule, 'execAgentFile').mockImplementation(((command, args, options) => (
@@ -750,7 +750,7 @@ process.stdin.on('end', () => {
       if (availability === 'unavailable') {
         expect(warning).toHaveBeenCalledWith(expect.stringContaining('Bundled strategy package identity drift'));
       } else if (availability === 'edit-base-unavailable') {
-        expect(warning).toHaveBeenCalledWith(expect.stringContaining('Fixture Git probe failed'));
+        expect(warning).toHaveBeenCalledWith(expect.stringContaining('Fixture edit base unconfirmed'));
       } else if (availability === 'git-probe-failed') {
         expect(warning).toHaveBeenCalledWith(expect.stringContaining('git probe failed'));
       }

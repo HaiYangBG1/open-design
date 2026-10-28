@@ -445,11 +445,23 @@ describe('buildOpenCodeMcpConfigContent', () => {
     const profiles = path.resolve(tmpdir(), 'od-strategy-permission/task-profiles');
     const base = kind === 'git' ? path.resolve(tmpdir(), 'od-project-permission') : path.parse(profiles).root;
     const parsed = JSON.parse(buildOpenCodeMcpConfigContent([], {}, {
-      readOnlyDirectories: [profiles], readOnlyEditBaseDir: base,
+      readOnlyDirectories: [profiles], readOnlyEditBaseDirs: [base],
     })!);
     expect(parsed.permission.edit[path.join(path.relative(base, profiles), '**')]).toBe('deny');
     expect(parsed.permission.edit[path.join(profiles, '**')]).toBe('deny');
     expect(parsed.permission.external_directory[path.relative(base, profiles)]).toBeUndefined();
+  });
+
+  it('denies resource edits relative to every candidate worktree', () => {
+    const profiles = path.resolve(tmpdir(), 'od-strategy-permission/task-profiles');
+    const bases = [path.resolve(tmpdir(), 'od-project-permission'), path.parse(profiles).root];
+    const parsed = JSON.parse(buildOpenCodeMcpConfigContent([], {}, {
+      readOnlyDirectories: [profiles], readOnlyEditBaseDirs: bases,
+    })!);
+    for (const base of bases) {
+      expect(parsed.permission.edit[path.join(path.relative(base, profiles), '**')]).toBe('deny');
+    }
+    expect(Object.values(parsed.permission.edit)).not.toContain('allow');
   });
 
   it('returns null when no enabled servers (avoids polluting OPENCODE_CONFIG_CONTENT)', () => {

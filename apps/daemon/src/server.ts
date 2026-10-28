@@ -511,7 +511,7 @@ import {
 } from './runtimes/auth.js';
 import { readOpenCodeServiceFailure } from './runtimes/opencode-log.js';
 import { applyOpenCodeEventPlugin } from './runtimes/opencode-event-plugin.js';
-import { resolveOpenCodeEditBaseDir } from './runtimes/opencode-permissions.js';
+import { resolveOpenCodeEditBaseDirs } from './runtimes/opencode-permissions.js';
 import { createAgentStderrVisibilityFilter } from './amr-stderr-filter.js';
 import { createQoderStreamHandler } from './runtimes/qoder-stream.js';
 import { subscribe as subscribeFileEvents } from './project-watchers.js';
@@ -13888,17 +13888,23 @@ export async function startServer({
     if (isOpenCodeContent || isMiMoContent) {
       try {
         let readOnlyDirectories: string[] = [];
-        let readOnlyEditBaseDir: string | undefined;
+        let readOnlyEditBaseDirs: string[] = [];
         if (isOpenCodeContent && strategyTaskAssets.taskProfileRoot) {
           try {
-            readOnlyEditBaseDir = await resolveOpenCodeEditBaseDir(effectiveCwd);
+            const editBase = await resolveOpenCodeEditBaseDirs(effectiveCwd);
+            readOnlyEditBaseDirs = editBase.dirs;
             readOnlyDirectories = [strategyTaskAssets.taskProfileRoot];
+            if (editBase.gitProbe === 'failed') {
+              console.warn(`[opencode-resource-permissions] git probe failed; denying resource edits against every candidate worktree ${JSON.stringify({
+                reason: editBase.gitProbeError, candidates: editBase.dirs,
+              })}`);
+            }
           } catch (err) {
             // Withhold only this resource grant; MCP, provider and ordinary
             // project permissions must still reach the child process.
-            console.warn(
-              `[opencode-resource-permissions] grant skipped: ${err instanceof Error ? err.message : String(err)}`,
-            );
+            console.warn(`[opencode-resource-permissions] grant skipped: edit base unconfirmed ${JSON.stringify({
+              reason: err instanceof Error ? err.message : String(err),
+            })}`);
           }
         }
         opencodeConfigContent = buildOpenCodeMcpConfigContent(
@@ -13908,9 +13914,7 @@ export async function startServer({
             allowedDirectories: [effectiveCwd, ...extraAllowedDirs],
             // Only the verified loader result may authorize rule cards.
             readOnlyDirectories,
-            ...(readOnlyEditBaseDir
-              ? { readOnlyEditBaseDir }
-              : {}),
+            readOnlyEditBaseDirs,
             ...(byokOpenCodeProvider
               ? { extraConfig: byokOpenCodeProvider.config }
               : {}),

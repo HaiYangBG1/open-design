@@ -49,6 +49,7 @@ import { startServer } from '../src/server.js';
 import * as automaticProduction from '../src/strategies/od-next/automatic-simple-production.js';
 import * as deviceFrames from '../src/strategies/od-next/device-frames.js';
 import * as openCodePermissions from '../src/runtimes/opencode-permissions.js';
+import * as invocationModule from '../src/runtimes/invocation.js';
 import {
   getStrategyTaskExecution
 } from '../src/strategies/task-store.js';
@@ -636,6 +637,11 @@ process.exit(127);
     { agentId: 'byok-opencode', availability: 'unavailable' },
     { agentId: 'opencode', availability: 'edit-base-unavailable' },
     { agentId: 'byok-opencode', availability: 'edit-base-unavailable' },
+    // Windows packaged QA W03: `git rev-parse` was killed by its timeout, the
+    // grant was withheld, the run could not read its task profile, and it
+    // still finished as completed without the requested change.
+    { agentId: 'opencode', availability: 'git-probe-failed' },
+    { agentId: 'byok-opencode', availability: 'git-probe-failed' },
     { agentId: 'opencode', availability: 'ordinary' },
   ] as const)('starts a frozen $agentId run with bundled task assets $availability and preserves unrelated config', async ({ agentId, availability }) => {
     delete process.env.OD_NEXT_STRATEGY_LOCAL_SYNTHETIC_CANARY;
@@ -682,6 +688,15 @@ process.stdin.on('end', () => {
       } else if (availability === 'edit-base-unavailable') {
         vi.spyOn(openCodePermissions, 'resolveOpenCodeEditBaseDir')
           .mockRejectedValue(new Error('Fixture Git probe failed'));
+      } else if (availability === 'git-probe-failed') {
+        const runAgentFile = invocationModule.execAgentFile;
+        vi.spyOn(invocationModule, 'execAgentFile').mockImplementation(((command, args, options) => (
+          command === 'git' && args?.[0] === 'rev-parse'
+            ? Promise.reject(Object.assign(new Error('Command failed: git rev-parse --show-toplevel'), {
+              killed: true, signal: 'SIGTERM', stderr: '',
+            }))
+            : runAgentFile(command, args, options)
+        )) as typeof invocationModule.execAgentFile);
       }
       const created = await postRun(started.url, {
         ...publicRunRequest(fixture, 'Build a motion page.', label),
@@ -715,8 +730,9 @@ process.stdin.on('end', () => {
       expect(rules[invocation.cwd]).toBe('allow');
       const bundledRoot = path.join(REPO_ROOT, 'plugins/_official');
       const root = path.join(bundledRoot, 'scenarios/od-next-strategy/assets/task-profiles');
+      const granted = availability === 'available' || availability === 'git-probe-failed';
       for (const entry of [root, path.join(root, '*'), path.join(root, '**')]) {
-        if (availability === 'available') {
+        if (granted) {
           expect(rules[entry]).toBe('allow');
           expect(invocation.config.permission?.edit?.[entry]).toBe('deny');
         } else {
@@ -724,7 +740,7 @@ process.stdin.on('end', () => {
           expect(invocation.config.permission?.edit?.[entry]).toBeUndefined();
         }
       }
-      if (availability === 'available') {
+      if (granted) {
         // Fixture projects are outside Git; the CLI checks file edits against
         // the volume root while preserving writes inside its own project.
         const relativePattern = path.join(path.relative(path.parse(root).root, root), '**');
@@ -735,6 +751,8 @@ process.stdin.on('end', () => {
         expect(warning).toHaveBeenCalledWith(expect.stringContaining('Bundled strategy package identity drift'));
       } else if (availability === 'edit-base-unavailable') {
         expect(warning).toHaveBeenCalledWith(expect.stringContaining('Fixture Git probe failed'));
+      } else if (availability === 'git-probe-failed') {
+        expect(warning).toHaveBeenCalledWith(expect.stringContaining('git probe failed'));
       }
       expect(rules[path.join(bundledRoot, '*')]).toBeUndefined();
     } finally {
